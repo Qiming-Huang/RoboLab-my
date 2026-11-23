@@ -21,6 +21,18 @@
 
 html, body { background-color: var(--bg-0); color: var(--text-0); }
 
+.task-run-button {
+  background: var(--accent);
+  color: white;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.task-run-button:hover:not(:disabled) { filter: brightness(1.15); }
+.task-run-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* top nav (Scenes / Tasks / Results) */
 .topnav-brand {
   color: var(--text-0);

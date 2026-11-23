@@ -289,6 +289,111 @@ async function fetchJSON(url) {
   return r.json();
 }
 
+// Local Pi0.5 runs are independent of the selected catalog/results page.
+let taskRuns = null;
+let taskRunPending = false;
+let taskRunPolling = false;
+let taskRunRenderKey = '';
+
+async function openLaunchedRun(runId) {
+  state.selection = { view: 'run', run_id: runId };
+  setRoute('results', false);
+  await refreshAll();
+  await selectRun(runId);
+  renderSidebar();
+}
+
+function updateTaskRunButton() {
+  const button = $('#run-task-pi05');
+  if (!button) return;
+  button.disabled = taskRunPending || !taskRuns?.enabled || !!taskRuns?.active_job;
+  button.textContent = taskRunPending ? 'Starting…' : 'Run with Pi0.5';
+}
+
+function renderTaskRunStatus() {
+  updateTaskRunButton();
+  const host = $('#task-run-status');
+  const job = taskRuns?.active_job || taskRuns?.jobs?.[0];
+  if (!job) { host.hidden = true; return; }
+  const key = JSON.stringify(job);
+  if (key === taskRunRenderKey) return;
+  taskRunRenderKey = key;
+  host.hidden = false;
+  host.replaceChildren();
+  let message;
+  if (job.status === 'running') {
+    const progress = job.progress;
+    message = progress ? `${progress.step}/${progress.total} steps (${progress.percent}%)` : 'Preparing simulation…';
+  } else if (job.status === 'completed') {
+    message = job.success ? 'Task succeeded' : 'Episode finished without task success';
+    if (job.score != null) message += ` · score ${(job.score * 100).toFixed(0)}%`;
+  } else {
+    message = job.message || 'Simulation failed';
+  }
+  host.appendChild(el('div', { class: 'flex items-center gap-3 flex-wrap' },
+    el('strong', {}, job.task),
+    el('span', { style: { color: job.status === 'failed' ? 'var(--fail)' : 'var(--text-1)' } }, message),
+    job.status === 'completed' ? el('button', {
+      class: 'hover:underline', style: { color: 'var(--accent-fg)' },
+      onclick: () => openLaunchedRun(job.run_id),
+    }, 'View results →') : null));
+  if (job.status === 'failed' && job.log_tail) {
+    host.appendChild(el('details', { class: 'mt-2' },
+      el('summary', { class: 'cursor-pointer' }, 'Show error log'),
+      el('pre', { class: 'text-xs mt-2 overflow-auto', style: { maxHeight: '200px', whiteSpace: 'pre-wrap' } }, job.log_tail)));
+  }
+}
+
+async function refreshTaskRuns() {
+  if (taskRunPolling) return;
+  taskRunPolling = true;
+  try {
+    taskRuns = await fetchJSON('/api/jobs');
+    renderTaskRunStatus();
+  } catch (error) {
+    taskRuns = null;
+    updateTaskRunButton();
+    const host = $('#task-run-status');
+    host.hidden = false;
+    host.textContent = 'Task launch status is unavailable. Refresh the dashboard to retry.';
+    taskRunRenderKey = '';
+  } finally {
+    taskRunPolling = false;
+  }
+}
+
+function taskRunControl(task) {
+  const errorHost = el('p', { class: 'text-sm mt-2', role: 'alert', style: { color: 'var(--fail)' } });
+  const button = el('button', {
+    id: 'run-task-pi05', type: 'button', class: 'task-run-button', disabled: '',
+    onclick: async () => {
+      taskRunPending = true;
+      errorHost.textContent = '';
+      updateTaskRunButton();
+      try {
+        const response = await fetch('/api/jobs', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task: task.task_name }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not launch this task.');
+      } catch (error) {
+        errorHost.textContent = error.message;
+      } finally {
+        taskRunPending = false;
+        await refreshTaskRuns();
+        updateTaskRunButton();
+      }
+    },
+  }, 'Run with Pi0.5');
+  return el('div', { class: 'panel p-4 mb-4' },
+    el('div', { class: 'flex items-center gap-4 flex-wrap' }, button,
+      el('p', { class: 'text-sm', style: { color: 'var(--text-1)' } },
+        'One episode with the default instruction. Results and videos are saved automatically.')),
+    el('p', { class: 'text-xs mt-2', style: { color: 'var(--text-2)' } },
+      'One dashboard run at a time. Pi0.5 must be running on the server.'), errorHost);
+}
+
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -2384,7 +2489,7 @@ function renderPlots(host, ts) {
 
 // ---- top-level router (Home / Scenes / Tasks / Results) -------------------
 
-function setRoute(route) {
+function setRoute(route, renderView = true) {
   state.route = route;
   // Toggle the sidebar pane and swap its inner content per route. Home /
   // Scenes hide the sidebar entirely; Results and Tasks each show their
@@ -2403,6 +2508,7 @@ function setRoute(route) {
   // Clear breadcrumb + compare bar between routes.
   $('#breadcrumb').innerHTML = '';
   $('#compare-bar').innerHTML = '';
+  if (!renderView) return;
   if (route === 'home') renderHome();
   else if (route === 'scenes') renderScenesIndex();
   else if (route === 'tasks') renderTasksIndex();
@@ -3020,6 +3126,8 @@ async function selectTaskDetail(name) {
   pane.appendChild(el('div', { class: 'mb-4' },
     el('h2', { class: 'text-2xl font-semibold mb-1' }, t.task_name),
     el('p', { class: 'text-sm font-mono', style: { color: 'var(--text-2)' } }, t.filename || '')));
+  pane.appendChild(taskRunControl(t));
+  refreshTaskRuns();
 
   // Instruction variants
   const variants = t.instruction_variants || (t.instruction ? { default: t.instruction } : {});
@@ -3273,6 +3381,8 @@ function initSidebarChrome() {
 
 async function boot() {
   initSidebarChrome();
+  refreshTaskRuns();
+  setInterval(refreshTaskRuns, 3000);
   $('#overview-btn').addEventListener('click', () => { selectOverview(); renderSidebar(); });
   $('#source-add').addEventListener('click', addSourceFromInput);
   $('#source-input').addEventListener('keydown', (ev) => {

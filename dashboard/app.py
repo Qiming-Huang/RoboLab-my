@@ -11,7 +11,9 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, ConfigDict, Field
 
+from dashboard.jobs import LaunchError, RunManager
 from dashboard.loaders.catalog import (
     build_scene_index,
     default_task_folder,
@@ -19,18 +21,23 @@ from dashboard.loaders.catalog import (
     filter_tasks_by_folder,
     get_task,
     list_task_folders,
-    validate_task_folder,
     load_scene_stats,
     load_scenes,
     load_tasks,
     resolve_scenes_metadata_dir,
     task_summary,
+    validate_task_folder,
 )
 from dashboard.loaders.hdf5 import episode_timeseries, list_episode_keys
 from dashboard.loaders.local import LocalLoader, _score_ci, _sr_beta_ci
 from dashboard.loaders.sources import SourceRegistry
 
 PKG_DIR = Path(__file__).parent
+
+
+class TaskRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task: str = Field(min_length=1, max_length=128)
 
 
 def _resolve_dt(task_dir: Path, env_id: int, run_index: int) -> float | None:
@@ -97,6 +104,31 @@ def create_app(initial_dir: Path | None = None, scenes_dir: Path | None = None) 
     """
     scenes_metadata_dir = resolve_scenes_metadata_dir(str(scenes_dir) if scenes_dir else None)
     app = FastAPI(title="RoboLab Results Dashboard")
+    runs = RunManager(PKG_DIR.parent)
+    app.state.run_manager = runs
+
+    @app.get("/api/jobs")
+    def task_runs():
+        try:
+            return runs.snapshot()
+        except LaunchError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+    @app.post("/api/jobs", status_code=202)
+    def launch_task(payload: TaskRunRequest, request: Request):
+        # JSON requests from this dashboard are allowed; other browser origins
+        # must not be able to trigger local GPU work.
+        origin = request.headers.get("origin")
+        expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
+        if origin is not None and origin != expected_origin:
+            raise HTTPException(status_code=403, detail="Launch tasks from the dashboard's own origin.")
+        try:
+            job = runs.start(payload.task)
+            registry.add(PKG_DIR.parent / "output")
+            _refresh_loader()
+            return job
+        except LaunchError as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
     registry = SourceRegistry()
     if initial_dir is not None:

@@ -13,6 +13,9 @@ __pycache__
 **NOT_USED.py
 **OLD.py
 .venv
+.cache/
+.local/
+.runtime/
 debug/*
 !debug/scripts/
 !debug/scripts/**
@@ -20,6 +23,8 @@ debug/scripts/__pycache__/
 !debug/container_hulls/
 !debug/container_hulls/**
 docker-cache/
+
+output/*
 
 # Documentation
 docs/superpowers/

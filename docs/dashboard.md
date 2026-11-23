@@ -34,6 +34,29 @@ Then open `http://localhost:8080` locally or `http://<your-lan-ip>:8080` from an
 
 ## What it shows
 
+### Run a task with Pi0.5
+
+In this local checkout, open **Tasks**, select a task, and click **Run with
+Pi0.5**. This starts one environment and one episode using the task's default
+instruction. The status banner shows simulator preparation and step progress;
+when the episode finishes, **View results →** opens its metrics and videos.
+
+Only one dashboard run can be active at a time. Reloading the page or
+restarting the dashboard retains the active run's status. A completed episode
+can still report task failure; the banner distinguishes that outcome from a
+simulator error.
+
+The local Pi0.5 server must already be running. If it is offline, start it with
+`bash scripts/local_pi05_server.sh` and retry. See [the local Pi0.5 guide](local_pi05.md)
+for installation and server settings. The dashboard's local launch script is
+`scripts/local_pi05_eval.sh`.
+
+The launcher API is `GET /api/jobs` for status and `POST /api/jobs` with JSON
+`{"task": "AnimalsInBinTask"}` to start a catalog task. It accepts task names
+from the benchmark metadata and does not accept arbitrary commands or flags.
+Runtime state and per-run logs are saved under `.runtime/`, with evaluation
+artifacts under `output/`.
+
 ### Scenes
 
 Browse every USD scene in the asset library — a card grid with a preview thumbnail per scene, the object count, and the number of tasks that reference each one. Click into any scene to see its full prim list (name, payload USD path, description, static-body flag) and a back-link to every task that uses it.
